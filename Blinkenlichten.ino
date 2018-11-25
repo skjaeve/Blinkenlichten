@@ -171,6 +171,10 @@ void loop() {
         short int fadeout_progress = millis() - stageEndMillis; // How far into the fade-out
 
         short int ledLevel = map(fadeout_progress, 0, fade_duration, 4096, 0);
+        // We may overshoot duration slightly, and this will cause an unsigned rollunder in ledGamma() so we truncate to zero
+        if (ledLevel < 0) {
+            ledLevel = 0;
+        }
         for (uint8_t led = 0; led < 16; led++) {
             if (ledLevel < ledLevels[led]) {
                 pwm.setPin(led, ledGamma(ledLevel));
