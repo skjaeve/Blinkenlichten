@@ -135,6 +135,7 @@ void loop() {
 #if DEBUG
         Serial.println("DEBUG: LIGHTUP_STAGE");
 #endif
+        // This switches on/off the groups of four LEDs above each switch.
         int ledGroupBase[4] = {6, 7, 14, 15}; // LEDs associated with switch 0, or was it 3?
         for (int switchPinCt = 0; switchPinCt < 4; switchPinCt++) {
             bool pinState = digitalRead(switchPins[switchPinCt]);
@@ -144,8 +145,8 @@ void loop() {
                 pwm.setPin(ledNum, ledGamma(ledLevel));
                 ledLevels[ledNum] = ledLevel;
             }
-                
         }
+
         stageEndMillis = millis();
         STAGE++;
 
@@ -153,13 +154,13 @@ void loop() {
 #if DEBUG
         Serial.println("DEBUG: WAIT_STAGE");
 #endif
-        if (millis() - stageEndMillis < 1000) {
+        if (millis() - stageEndMillis < 2000) {
             LowPower.idle(SLEEP_250MS, ADC_OFF, TIMER2_OFF, TIMER1_OFF, TIMER0_ON, SPI_OFF, USART0_ON, TWI_ON);
         } else {
             stageEndMillis = millis();
             STAGE++;
         }
-    
+
     } else if (STAGE == FADE_OUT_STAGE) {
 #if DEBUG
         Serial.println("DEBUG: FADE_OUT_STAGE");
@@ -170,10 +171,10 @@ void loop() {
         short int fadeout_progress = millis() - stageEndMillis; // How far into the fade-out
 
         short int ledLevel = map(fadeout_progress, 0, fade_duration, 4096, 0);
-        for (uint8_t pwmnum = 0; pwmnum < 16 && WAS_INTERRUPTED == false; pwmnum++) {
-            if (ledLevel < ledLevels[pwmnum]) {
-                pwm.setPin(pwmnum, ledGamma(ledLevel));
-                ledLevels[pwmnum] = ledLevel;
+        for (uint8_t led = 0; led < 16; led++) {
+            if (ledLevel < ledLevels[led]) {
+                pwm.setPin(led, ledGamma(ledLevel));
+                ledLevels[led] = ledLevel;
             }
         }
         if (fadeout_progress >= fade_duration) {
@@ -185,24 +186,16 @@ void loop() {
 #if DEBUG
         Serial.println("DEBUG: PREPARE_GAUSSIAN_STAGE");
 #endif                
-        
-        //// Used for the gaussian sequences
-        //short int gaussLedChosen[16];
-        //short int numGaussLedChosen;
-        //short int gaussLedState[16];
-        //short int gaussLedTotalDuration[16];
-        //short int gaussLedStartMillis[16];
 
         switchNumber = 0;
         for (uint8_t i = 0; i < 4; i++) {
             switchNumber += ((int) !digitalRead(switchPins[i])) << i;
         }
         switchNumber++; // Allow all 16 leds to be lit (shift from [0, 15] lit to [1, 16])
-        // Choose which LEDs to keep lit before fading
            /* Init ledsToLight array */
-        for (int j = 0; j < 16; j++) {
-            ledsToLight[j] = 0;
-            pwm.setPin(j, ledGamma(0));
+        for (int led = 0; led < 16; led++) {
+            ledsToLight[led] = 0;
+            pwm.setPin(led, ledGamma(0));
         }
         ledsChosen = 0;
 
@@ -221,7 +214,7 @@ void loop() {
         unsigned int max_gaussian_duration = 5000;
         unsigned int min_gaussian_duration = 1000;
         
-        // Update durations, choose new LEDs if needed
+        // Choose new LEDs and durations if needed
         while ((ledsChosen < switchNumber) && ((millis() - stageEndMillis) < gaussians_duration)) {
             int led = random(16);
             if (ledsToLight[led] == 0) {
@@ -240,12 +233,13 @@ void loop() {
                 if (time_elapsed > total_duration) {
                     ledsChosen--;
                     ledsToLight[led] = 0;
+                    ledLevel = 0;
                 } else {
                     ledLevel = truncgauss(time_elapsed, total_duration);
                 }
                 pwm.setPin(led, ledGamma(ledLevel));
             } else {
-                //pwm.setPin(led, ledGamma(0));
+                pwm.setPin(led, ledGamma(0));
             }
         }
 
@@ -272,25 +266,17 @@ void loop() {
 #else
         LowPower.powerDown(SLEEP_500MS, ADC_OFF, BOD_ON);
 #endif
-        //FIXME code to skip to next stage
-
+        //FIXME code to have a one-in-a-million chance of skipping to next stage after 30min
+        if ((millis() - stageEndMillis) > (30 * 60 * 1000L) && random(1000000) == 42) {
+            stageEndMillis = millis();
+            STAGE++;
+        }
 
     } else if (STAGE == FLASH_SOME_LIGHTS_STAGE) {
 #if DEBUG
         Serial.println("DEBUG: FLASH_SOME_LIGHTS_STAGE");
 #endif
-
-        // Return all LEDs to zero, but without blinking them
-        for (int16_t ledLevel = 4096; (ledLevel > -1) && (WAS_INTERRUPTED == false); ledLevel -= 2) {
-             for (uint8_t pwmnum = 0; pwmnum < 16 && WAS_INTERRUPTED == false; pwmnum++) {
-                if (ledLevel < ledLevels[pwmnum]) {
-                    pwm.setPin(pwmnum, ledGamma(ledLevel));
-                    ledLevels[pwmnum] = ledLevel;
-                }
-            }
-        }
+        STAGE = PREPARE_GAUSSIAN_STAGE;
         stageEndMillis = millis();
-        STAGE--;
-        // reset to previous stage
     }
 }

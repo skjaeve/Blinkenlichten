@@ -32,12 +32,24 @@
 uint16_t truncgauss(uint16_t time_elapsed, uint16_t total_duration);
 
 inline unsigned short int ledGamma(unsigned short int linear) {
-    unsigned short int gamma_out;
+    signed short int gamma_out;
     float gamma = 2.8;
-    unsigned short int max_in = 4096;
-    unsigned short int max_out = 4096;
-    gamma_out =  max_out - (unsigned short int) (pow( (((float) linear) / ((float) max_in)), gamma) * max_out + 0.5);
-    return gamma_out;
+    signed short int max_in = 4096;
+    signed short int max_out = 4096;
+
+    if (linear > (unsigned) max_in) {
+        linear = max_in;
+    }
+    
+    gamma_out =  max_out - (signed short int) (pow( (((float) linear) / ((float) max_in)), gamma) * max_out + 0.5);
+    // Truncate if over/underflow
+    if (gamma_out < 0) {
+        gamma_out = 0;
+    }
+    if (gamma_out > max_out) {
+        gamma_out = max_out;
+    }
+    return (unsigned short int) gamma_out;
 }
 
 #endif
