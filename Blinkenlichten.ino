@@ -77,10 +77,16 @@ bool ledTimeout = true;
 
 uint8_t switchNumber = 0;
 
+const unsigned int fade_duration = 5000; // How long the fade-out should take (milliseconds)
+
+
 // Used for the gaussian sequences
 unsigned short int gaussLedTotalDuration[16];
 unsigned short int gaussLedStartMillis[16];
 
+const unsigned int gaussians_duration = 20000; // How long (millisecs) the entire Gaussians stage is rolling (running Gaussians are allowed to finish, but no new are started
+const unsigned int max_gaussian_duration = 5000;
+const unsigned int min_gaussian_duration = 1000;
 
 void switchFlipped(void) {
     WAS_INTERRUPTED = true;
@@ -167,7 +173,6 @@ void loop() {
 #endif
         // Return all LEDs to zero, but without blinking them
         // Compute linear progress from 4096 to 0 over duration
-        short int fade_duration = 5000; // How long the fade-out should take
         short int fadeout_progress = millis() - stageEndMillis; // How far into the fade-out
 
         short int ledLevel = map(fadeout_progress, 0, fade_duration, 4096, 0);
@@ -214,9 +219,7 @@ void loop() {
         Serial.println(switchNumber);
 
 #endif
-        unsigned int gaussians_duration = 20000; // After this time has elapsed, no more gaussians are started
-        unsigned int max_gaussian_duration = 5000;
-        unsigned int min_gaussian_duration = 1000;
+
         
         // Choose new LEDs and durations if needed
         while ((ledsChosen < switchNumber) && ((millis() - stageEndMillis) < gaussians_duration)) {
