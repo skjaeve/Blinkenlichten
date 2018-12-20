@@ -16,17 +16,9 @@
  *  Board now enters a sleep-check-sleep-check loop state, waiting for something to happen or the battery to run out. 
  *  If a switch is flipped at any point in the whole sequence, an interrupt triggers, and the sequence starts from scratch.
  *  
- *  May add random flashes of light to sleep-check cycle.
+ *  TODO: Add random flashes of light to sleep-check cycle.
  */
-/* Version fire: erstatt blinke-rulling med:
-  *  tilsvarar brytarinnstilling omsett til binærtal
- *  X lamper lyser opp og sløkker, lysstyrken følgjer ein gammakorrigert trunkert Gauss-kurve. Lengda på syklus varierer (velg tilfeldig)
- *  Når ei lampe gjennomfører syklus blir ei ny lampe starta i ny syklus - kan vera same eller anna, lampe og sykluslengde vert plukka tilfeldig for kvar gong
- *  Avslutning: etter ei viss tid sluttar brettet å starta nye gauss-syklusar, dei køyrande avsluttar og lampene går gradvis i svart
- *  
- *  Korleis  - funksjon eller tabell? Testing med gamma tyder på at funksjon tar ~2 gang så lang tid som PROGMEM-tabell men det er truleg ikkje noko problem
- *  å berre kompensera med å dobla tidssteget i funksjonen jf. med tabellen. Kan uansett finstemma funksjonen sånn etterkvart.
- */
+
  
  /****************************************************/
 #include <LowPower.h>
@@ -38,8 +30,9 @@
 #include <Adafruit_PWMServoDriver.h>
 #include <PinChangeInterrupt.h>
 
+// Warning: Debug mode does not work properly on Atmega168 because Serial uses too much memory
 #ifndef DEBUG
-#define DEBUG 0
+#define DEBUG 1
 #endif
 
 // Corresponds to digitalRead() returns from pins in INPUT_PULLUP mode, which the switches should be
@@ -48,15 +41,16 @@
 
 // There are multiple stages
 // Keep track of where we are in each stage
-int numstages = 0;
-volatile int STAGE = 0;
-const int LIGHTUP_STAGE = numstages++;
-const int WAIT_STAGE = numstages++;
-const int FADE_OUT_STAGE = numstages++;
-const int PREPARE_GAUSSIAN_STAGE = numstages++;
-const int GAUSSIAN_STAGE = numstages++;
-const int SLEEP_STAGE = numstages++;
-const int FLASH_SOME_LIGHTS_STAGE = numstages++;
+uint8_t numstages = 0;
+uint8_t STAGE = 0;
+// Could save 6 bytes by replacing const's with #defines (would need to set value manually)
+const uint8_t LIGHTUP_STAGE = numstages++;
+const uint8_t WAIT_STAGE = numstages++;
+const uint8_t FADE_OUT_STAGE = numstages++;
+const uint8_t PREPARE_GAUSSIAN_STAGE = numstages++;
+const uint8_t GAUSSIAN_STAGE = numstages++;
+const uint8_t SLEEP_STAGE = numstages++;
+const uint8_t FLASH_SOME_LIGHTS_STAGE = numstages++;
 volatile bool WAS_INTERRUPTED = false;
 
 // called this way, it uses the default address 0x40
@@ -69,10 +63,10 @@ unsigned long stageEndMillis = 0;
 
 unsigned long previousLedChangeMillis;        // will store last time any LED was updated
 
-unsigned short int ledsToLight[16];
-// ledLevels contains LINEAR led value, before ledGamma() function // or not, ledLEvel shoudl come from truncgauss() now
-short int ledLevels[16];
-unsigned short int ledsChosen = 0;
+uint8_t ledsToLight[16]; // Could save 14 bytes by replacing this with a 16-bit bitmask
+// ledLevels contains LINEAR led value, before ledGamma() function // or not, ledLEvel should come from truncgauss() now
+unsigned short int ledLevels[16];
+uint8_t ledsChosen = 0;
 bool ledTimeout = true;
 
 uint8_t switchNumber = 0;
@@ -84,9 +78,14 @@ const unsigned int fade_duration = 5000; // How long the fade-out should take (m
 unsigned short int gaussLedTotalDuration[16];
 unsigned short int gaussLedStartMillis[16];
 
-const unsigned int gaussians_duration = 20000; // How long (millisecs) the entire Gaussians stage is rolling (running Gaussians are allowed to finish, but no new are started
-const unsigned int max_gaussian_duration = 5000;
-const unsigned int min_gaussian_duration = 1000;
+const unsigned int gaussians_duration = 30000; // How long (millisecs) the entire Gaussians stage is rolling (running Gaussians are allowed to finish, but no new are started
+const unsigned int max_gaussian_duration = 10000;
+const unsigned int min_gaussian_duration = 500;
+
+unsigned int minutes_slept_so_far = 0;
+unsigned long int milliseconds_slept_so_far = 0;
+unsigned int last_minute_checked = 0;
+unsigned int this_minute = 0;
 
 void switchFlipped(void) {
     WAS_INTERRUPTED = true;
@@ -101,7 +100,6 @@ void setup() {
     Serial.begin(9600);
     Serial.println("DEBUG: Initialize 16-LED switchboard");
 #endif
-
 
     pwm.begin();
     pwm.setPWMFreq(1600);  // This is the maximum PWM frequency
@@ -136,18 +134,23 @@ void loop() {
         STAGE = LIGHTUP_STAGE;
         lastSwitchFlippedMillis = millis();
         ledsChosen = 0;
+        
+        minutes_slept_so_far = 0;
+        milliseconds_slept_so_far = 0;
+        last_minute_checked = 0;
+
     }
     if (STAGE == LIGHTUP_STAGE) {
 #if DEBUG
         Serial.println("DEBUG: LIGHTUP_STAGE");
 #endif
         // This switches on/off the groups of four LEDs above each switch.
-        int ledGroupBase[4] = {6, 7, 14, 15}; // LEDs associated with switch 0, or was it 3?
-        for (int switchPinCt = 0; switchPinCt < 4; switchPinCt++) {
+        uint8_t ledGroupBase[4] = {6, 7, 14, 15}; // LEDs associated with switch 0, or was it 3?
+        for (uint8_t switchPinCt = 0; switchPinCt < 4; switchPinCt++) {
             bool pinState = digitalRead(switchPins[switchPinCt]);
-            for (int ledInGroup = 0; ledInGroup < 4; ledInGroup++) {
-                int ledNum = ledGroupBase[ledInGroup] - switchPinCt * 2;
-                int ledLevel = 4096 * !pinState; // Turn off led if pin is HIGH else on if LOW
+            for (uint8_t ledInGroup = 0; ledInGroup < 4; ledInGroup++) {
+                uint8_t ledNum = ledGroupBase[ledInGroup] - switchPinCt * 2;
+                uint16_t ledLevel = 4096 * !pinState; // Turn off led if pin is HIGH else on if LOW
                 pwm.setPin(ledNum, ledGamma(ledLevel));
                 ledLevels[ledNum] = ledLevel;
             }
@@ -173,7 +176,7 @@ void loop() {
 #endif
         // Return all LEDs to zero, but without blinking them
         // Compute linear progress from 4096 to 0 over duration
-        short int fadeout_progress = millis() - stageEndMillis; // How far into the fade-out
+        short unsigned int fadeout_progress = millis() - stageEndMillis; // How far into the fade-out
 
         short int ledLevel = map(fadeout_progress, 0, fade_duration, 4096, 0);
         // We may overshoot duration slightly, and this will cause an unsigned rollunder in ledGamma() so we truncate to zero
@@ -202,7 +205,7 @@ void loop() {
         }
         switchNumber++; // Allow all 16 leds to be lit (shift from [0, 15] lit to [1, 16])
            /* Init ledsToLight array */
-        for (int led = 0; led < 16; led++) {
+        for (uint8_t led = 0; led < 16; led++) {
             ledsToLight[led] = 0;
             pwm.setPin(led, ledGamma(0));
         }
@@ -223,7 +226,7 @@ void loop() {
         
         // Choose new LEDs and durations if needed
         while ((ledsChosen < switchNumber) && ((millis() - stageEndMillis) < gaussians_duration)) {
-            int led = random(16);
+            uint8_t led = random(16);
             if (ledsToLight[led] == 0) {
                 ledsToLight[led] = 1;
                 ledsChosen++;
@@ -232,11 +235,11 @@ void loop() {
             }
         }
 
-        for (int led = 0; led < 16; led++) {
-            short int ledLevel = 0;
+        for (uint8_t led = 0; led < 16; led++) {
+            unsigned short int ledLevel = 0;
             if (ledsToLight[led] == 1) {
-                int total_duration = gaussLedTotalDuration[led];
-                int time_elapsed = millis() - gaussLedStartMillis[led];
+                unsigned short int total_duration = gaussLedTotalDuration[led];
+                unsigned short int time_elapsed = millis() - gaussLedStartMillis[led];
                 if (time_elapsed > total_duration) {
                     ledsChosen--;
                     ledsToLight[led] = 0;
@@ -253,6 +256,7 @@ void loop() {
         if (((millis() - stageEndMillis) > gaussians_duration) && (ledsChosen == 0)) {
             stageEndMillis = millis();
             STAGE++;
+
         }
     } else if (STAGE == SLEEP_STAGE) {
 #if DEBUG
@@ -266,23 +270,55 @@ void loop() {
           * wasted while idling. My setup runs for about four days off six 2450 mAh
           * 1.2V NIMH-batteries (in series).
           */
- 
+
 #if DEBUG
-        Serial.println("DEBUG: yawn");
+        //Serial.println("DEBUG: yawn");
         delay(500);
 #else
         LowPower.powerDown(SLEEP_500MS, ADC_OFF, BOD_ON);
 #endif
-        //FIXME code to have a one-in-a-million chance of skipping to next stage after 30min
-        if ((millis() - stageEndMillis) > (30 * 60 * 1000L) && random(1000000) == 42) {
-            stageEndMillis = millis();
-            STAGE++;
+        /*
+         *  millis() doesn't count while powerDown(), so counting sleep times instead and ignoring the time between sleeps.
+         */
+        milliseconds_slept_so_far += 500;
+ 
+#if DEBUG
+        Serial.print("DEBUG: Slept so far: ");
+        Serial.println(milliseconds_slept_so_far);
+#endif
+
+        /*
+         * Every iteration, check if it's a new minute. If yes, roll dice.
+         */
+        this_minute = (milliseconds_slept_so_far) / (60 * 1000L);
+
+        static unsigned short int MINUTES_BEFORE_FLASHING = 1;
+
+        if (this_minute > last_minute_checked && this_minute > 0) {
+            last_minute_checked = this_minute;
+            if (this_minute >= MINUTES_BEFORE_FLASHING && random(100) == 42) {
+                stageEndMillis = millis();
+                STAGE++;
+#if DEBUG
+                Serial.println("DEBUG: Jumping to hidden stage");
+                Serial.print("DEBUG:          Minute: ");
+                Serial.print(this_minute);
+                Serial.print(this_minute);
+                Serial.print(this_minute);
+                delay(500);
+#endif
+            }
         }
+        
 
     } else if (STAGE == FLASH_SOME_LIGHTS_STAGE) {
 #if DEBUG
         Serial.println("DEBUG: FLASH_SOME_LIGHTS_STAGE");
 #endif
+
+        milliseconds_slept_so_far = 0;
+        this_minute = 0;
+        last_minute_checked = 0;
         STAGE = PREPARE_GAUSSIAN_STAGE;
         stageEndMillis = millis();
     }
