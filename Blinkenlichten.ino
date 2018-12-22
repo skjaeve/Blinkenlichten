@@ -32,11 +32,11 @@
 
 // Warning: Debug mode does not work properly on Atmega168 because Serial uses too much memory
 #ifndef DEBUG
-#define DEBUG 1
+#define DEBUG 0
 #endif
 
 // Corresponds to digitalRead() returns from pins in INPUT_PULLUP mode, which the switches should be
-#define SWITCH_ON (LOW)
+#define SWITCH_ON (LOW) // FIXME: Not used
 #define SWITCH_OFF (HIGH)
 
 // There are multiple stages
@@ -53,6 +53,8 @@ const uint8_t SLEEP_STAGE = numstages++;
 const uint8_t FLASH_SOME_LIGHTS_STAGE = numstages++;
 volatile bool WAS_INTERRUPTED = false;
 
+// signed long int i = 0; // Recycle iterator variable for use in for loops? Could save a staggering 7 bytes!
+
 // called this way, it uses the default address 0x40
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
@@ -64,8 +66,8 @@ unsigned long stageEndMillis = 0;
 unsigned long previousLedChangeMillis;        // will store last time any LED was updated
 
 uint8_t ledsToLight[16]; // Could save 14 bytes by replacing this with a 16-bit bitmask
-// ledLevels contains LINEAR led value, before ledGamma() function // or not, ledLEvel should come from truncgauss() now
-unsigned short int ledLevels[16];
+// ledLevels contains LINEAR led value, before ledGamma() function // or not, ledLevel should come from truncgauss() now
+signed short int ledLevels[16]; // Only needs range 0..4097, but making it signed removes a compiler warning later.
 uint8_t ledsChosen = 0;
 bool ledTimeout = true;
 
@@ -98,28 +100,29 @@ void setup() {
 
 #if DEBUG
     Serial.begin(9600);
-    Serial.println("DEBUG: Initialize 16-LED switchboard");
+    // F() macro puts string in PROGMEM instead of dynamic memory, solving a problem where I ran out of memory on Atmega168. Seems to only work with strings though.
+    Serial.println(F("DEBUG: Initialize 16-LED switchboard"));
 #endif
 
     pwm.begin();
     pwm.setPWMFreq(1600);  // This is the maximum PWM frequency
 
     // Switches read HIGH when off
-    for (int i = 0; i < 4; i++) {
+    for (byte i = 0; i < 4; i++) {
         pinMode(switchPins[i], INPUT_PULLUP);
     }
     lastSwitchFlippedMillis = millis();
     previousLedChangeMillis = millis();
  
-    for (int i = 0; i < 4; i++) {
+    for (byte i = 0; i < 4; i++) {
         attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(switchPins[i]), switchFlipped, CHANGE);
 #if DEBUG
-        Serial.print("DEBUG: Interrupt added: pin ");
+        Serial.print(F("DEBUG: Interrupt added: pin "));
         Serial.println(switchPins[i]);
 #endif
     }
 #if DEBUG
-    Serial.println("DEBUG: Setup done");
+    Serial.println(F("DEBUG: Setup done"));
 #endif
     
 }
@@ -128,7 +131,7 @@ void loop() {
 
     if (WAS_INTERRUPTED == true) {
 #if DEBUG
-        Serial.println("DEBUG: INTERRUPT");
+        Serial.println(F("DEBUG: INTERRUPT"));
 #endif
         WAS_INTERRUPTED = false;
         STAGE = LIGHTUP_STAGE;
@@ -142,7 +145,7 @@ void loop() {
     }
     if (STAGE == LIGHTUP_STAGE) {
 #if DEBUG
-        Serial.println("DEBUG: LIGHTUP_STAGE");
+        Serial.println(F("DEBUG: LIGHTUP_STAGE"));
 #endif
         // This switches on/off the groups of four LEDs above each switch.
         uint8_t ledGroupBase[4] = {6, 7, 14, 15}; // LEDs associated with switch 0, or was it 3?
@@ -161,7 +164,7 @@ void loop() {
 
     } else if (STAGE == WAIT_STAGE) {
 #if DEBUG
-        Serial.println("DEBUG: WAIT_STAGE");
+        Serial.println(F("DEBUG: WAIT_STAGE"));
 #endif
         if (millis() - stageEndMillis < 2000) {
             LowPower.idle(SLEEP_250MS, ADC_OFF, TIMER2_OFF, TIMER1_OFF, TIMER0_ON, SPI_OFF, USART0_ON, TWI_ON);
@@ -172,13 +175,13 @@ void loop() {
 
     } else if (STAGE == FADE_OUT_STAGE) {
 #if DEBUG
-        Serial.println("DEBUG: FADE_OUT_STAGE");
+        Serial.println(F("DEBUG: FADE_OUT_STAGE"));
 #endif
         // Return all LEDs to zero, but without blinking them
         // Compute linear progress from 4096 to 0 over duration
         short unsigned int fadeout_progress = millis() - stageEndMillis; // How far into the fade-out
 
-        short int ledLevel = map(fadeout_progress, 0, fade_duration, 4096, 0);
+        short signed int ledLevel = map(fadeout_progress, 0, fade_duration, 4096, 0);
         // We may overshoot duration slightly, and this will cause an unsigned rollunder in ledGamma() so we truncate to zero
         if (ledLevel < 0) {
             ledLevel = 0;
@@ -196,7 +199,7 @@ void loop() {
 
     } else if (STAGE == PREPARE_GAUSSIAN_STAGE) {
 #if DEBUG
-        Serial.println("DEBUG: PREPARE_GAUSSIAN_STAGE");
+        Serial.println(F("DEBUG: PREPARE_GAUSSIAN_STAGE"));
 #endif                
 
         switchNumber = 0;
@@ -216,11 +219,10 @@ void loop() {
 
     } else if (STAGE == GAUSSIAN_STAGE) {
 #if DEBUG
-        Serial.print("DEBUG: GAUSSIAN_STAGE ");
+        Serial.print(F("DEBUG: GAUSSIAN_STAGE "));
         Serial.print(ledsChosen);
-        Serial.print(" LEDS CHOSEN SWITCH SETTING ");
+        Serial.print(F(" LEDS CHOSEN SWITCH SETTING "));
         Serial.println(switchNumber);
-
 #endif
 
         
@@ -260,7 +262,7 @@ void loop() {
         }
     } else if (STAGE == SLEEP_STAGE) {
 #if DEBUG
-        Serial.println("DEBUG: SLEEP_STAGE");
+        Serial.println(F("DEBUG: SLEEP_STAGE"));
 #endif
          /* 
           *  Sleeping doesn't actually do much power saving until I build a custom 
@@ -272,7 +274,7 @@ void loop() {
           */
 
 #if DEBUG
-        //Serial.println("DEBUG: yawn");
+        //Serial.println(F("DEBUG: yawn"));
         delay(500);
 #else
         LowPower.powerDown(SLEEP_500MS, ADC_OFF, BOD_ON);
@@ -283,7 +285,7 @@ void loop() {
         milliseconds_slept_so_far += 500;
  
 #if DEBUG
-        Serial.print("DEBUG: Slept so far: ");
+        Serial.print(F("DEBUG: Slept so far: "));
         Serial.println(milliseconds_slept_so_far);
 #endif
 
@@ -296,15 +298,19 @@ void loop() {
 
         if (this_minute > last_minute_checked && this_minute > 0) {
             last_minute_checked = this_minute;
-            if (this_minute >= MINUTES_BEFORE_FLASHING && random(100) == 42) {
+#if DEBUG
+                if (this_minute >= MINUTES_BEFORE_FLASHING && random(100) > 42) {
+#else
+                if (this_minute >= MINUTES_BEFORE_FLASHING && random(100) == 42) {
+#endif
                 stageEndMillis = millis();
                 STAGE++;
 #if DEBUG
-                Serial.println("DEBUG: Jumping to hidden stage");
-                Serial.print("DEBUG:          Minute: ");
+                Serial.println(F("DEBUG: Jumping to hidden stage"));
+                Serial.print(F("DEBUG:          Minute: "));
                 Serial.print(this_minute);
                 Serial.print(this_minute);
-                Serial.print(this_minute);
+                Serial.println(this_minute);
                 delay(500);
 #endif
             }
@@ -313,7 +319,7 @@ void loop() {
 
     } else if (STAGE == FLASH_SOME_LIGHTS_STAGE) {
 #if DEBUG
-        Serial.println("DEBUG: FLASH_SOME_LIGHTS_STAGE");
+        Serial.println(F("DEBUG: FLASH_SOME_LIGHTS_STAGE"));
 #endif
 
         milliseconds_slept_so_far = 0;
