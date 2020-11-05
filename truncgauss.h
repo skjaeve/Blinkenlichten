@@ -40,8 +40,11 @@ inline unsigned short int ledGamma(unsigned short int linear) {
     if (linear > (unsigned) max_in) {
         linear = max_in;
     }
-    
-    gamma_out =  max_out - (signed short int) (pow( (((float) linear) / ((float) max_in)), gamma) * max_out + 0.5);
+
+    // Sink current into PWM pin
+    //gamma_out = max_out - (signed short int) (pow( (((float) linear) / ((float) max_in)), gamma) * max_out + 0.5); // SINK CURRENT
+    // Source current from PWM pin
+    gamma_out = (signed short int) (pow( (((float) linear) / ((float) max_in)), gamma) * max_out + 0.5); // SORUCE CURRENT
     // Truncate if over/underflow
     if (gamma_out < 0) {
         gamma_out = 0;

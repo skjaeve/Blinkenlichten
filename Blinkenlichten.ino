@@ -1,22 +1,29 @@
-/* A simple board with four switches, 16 regular LEDs and a PWM board to run the LEDs. */
-
-/* Flip a switch:
- *  Board wakes up from sleep, or restarts its running sequence
- *  The four LEDs associated with each switch turns on if the switch is on, otherwise off.
- *  
- *  After a while the LEDs fade out.
- *  
- *  A number of LEDs defined by taking the switch settings to be a binary number, plus 1, is chosen to be lit.
- *  Which LEDs to light is chosen randomly. Each LED goes through a "truncgauss" fadein-fadeout sequence. 
- *  The duration of each fi-fo sequence is chosen randomly within some range.
- *  When a LED fades out, a new LED is chosen randomly to fade in/out with a new duration. 
- *  This continues until some time limit, after which all active LEDs complete their running fi-fo and the 
- *  LED board goes black.
- *  
- *  Board now enters a sleep-check-sleep-check loop state, waiting for something to happen or the battery to run out. 
- *  If a switch is flipped at any point in the whole sequence, an interrupt triggers, and the sequence starts from scratch.
- *  
- *  TODO: Add random flashes of light to sleep-check cycle.
+/* A simple board with four switches, 16 regular LEDs and a PCA9685 PWM board to
+ * run the LEDs.
+ *
+ * Flip a switch: Board wakes up from sleep, or restarts its running sequence
+ * The four LEDs associated with each switch turns on if the switch is on,
+ * otherwise off.
+ *
+ * After a while the LEDs fade out.
+ *
+ * A number of LEDs defined by taking the switch settings to be a binary number,
+ * plus 1, is chosen to be lit. Which LEDs to light is chosen randomly (all
+ * right, pseudo-randomly). Each LED goes through a "truncgauss" fadein-fadeout
+ * sequence. The duration of each fi-fo sequence is chosen randomly within some
+ * range. Fi-fo is symmetrical i.e. fadein duration is equal to fadeout
+ * duration. When a LED fades out, a new LED is chosen randomly to fade in/out
+ * with a new duration. This continues until some time limit, after which all
+ * active LEDs complete their running fi-fo and the LED board goes black.
+ *
+ * Board now enters a sleep-check-sleep-check loop state, waiting for something
+ * to happen or the battery to run out. If a switch is flipped at any point in
+ * the whole sequence, an interrupt triggers, and the sequence starts from
+ * scratch.
+ *
+ * Note: 1 MHz microcrontroller frequency is too slow to get a smooth
+ *       fadein/out. 8 MHz is fine. Have not tested 4 MHz.
+ *
  */
 
  
@@ -31,6 +38,7 @@
 #include <PinChangeInterrupt.h>
 
 // Warning: Debug mode does not work properly on Atmega168 because Serial uses too much memory
+// Correction: F() macro fixed this problem
 #ifndef DEBUG
 #define DEBUG 0
 #endif
@@ -137,7 +145,8 @@ void loop() {
         STAGE = LIGHTUP_STAGE;
         lastSwitchFlippedMillis = millis();
         ledsChosen = 0;
-        
+        pwm.wakeup(); // FIXME see pwm.sleep() comment
+
         minutes_slept_so_far = 0;
         milliseconds_slept_so_far = 0;
         last_minute_checked = 0;
@@ -265,19 +274,29 @@ void loop() {
         Serial.println(F("DEBUG: SLEEP_STAGE"));
 #endif
          /* 
-          *  Sleeping doesn't actually do much power saving until I build a custom 
-          * Atmega328-breakout with efficient buck converter and other power-saving
-          * thingies such as a relay/mosfet switching on/off power to the leds and 
-          * PWM board. With the standard Arduino (clone) setup most of the power is
-          * wasted while idling. My setup runs for about four days off six 2450 mAh
-          * 1.2V NIMH-batteries (in series).
+          * Sleeping doesn't actually do much power saving until I build a
+          * custom Atmega328-breakout with efficient buck converter and other
+          * power-saving thingies such as a relay/mosfet switching on/off power
+          * to the leds and PWM board. With the standard Arduino (clone) setup
+          * most of the power is wasted while idling. My setup runs for about
+          * four days off six 2450 mAh 1.2V NIMH-batteries (in series).
           */
+
+        pwm.sleep(); 
+        /* 
+         * NOTE: Putting the chip to sleep turns off PWM, which lights up all
+         *       the LEDs if chip is wired as current sink. Need to turn off
+         *       power to LEDs (add relay/transistor and code to control it) or
+         *       rewire to current source direction of current before you can
+         *       use this feature. Rewiring also requires a change in
+         *       truncgauss.h
+         */
 
 #if DEBUG
         //Serial.println(F("DEBUG: yawn"));
         delay(500);
 #else
-        LowPower.powerDown(SLEEP_500MS, ADC_OFF, BOD_ON);
+        LowPower.powerDown(SLEEP_500MS, ADC_OFF, BOD_OFF);
 #endif
         /*
          *  millis() doesn't count while powerDown(), so counting sleep times instead and ignoring the time between sleeps.
@@ -299,9 +318,9 @@ void loop() {
         if (this_minute > last_minute_checked && this_minute > 0) {
             last_minute_checked = this_minute;
 #if DEBUG
-                if (this_minute >= MINUTES_BEFORE_FLASHING && random(100) > 42) {
+            if (this_minute >= MINUTES_BEFORE_FLASHING && random(100) > 42) {
 #else
-                if (this_minute >= MINUTES_BEFORE_FLASHING && random(100) == 42) {
+            if (this_minute >= MINUTES_BEFORE_FLASHING && random(100) == 42) {
 #endif
                 stageEndMillis = millis();
                 STAGE++;
